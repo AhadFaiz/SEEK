@@ -40,7 +40,7 @@ ARCHIVE_PATH = PROCESSED_DIR / "tenders_archive.csv"
 
 # ── 3. Task 1: Etimad extraction ─────────────────────────────────────────
 BASE_URL = "https://tenders.etimad.sa/Tender/AllSupplierTendersForVisitorAsync"
-PAGE_SIZE = 100
+PAGE_SIZE = 24  # Etimad ignores any requested value and always returns 24/page — confirmed by testing
 PAGES_TO_SCRAPE = 20
 PUBLISH_DATE_ID = 5  # matches the default filter applied on the public listing page
 

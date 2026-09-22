@@ -1,0 +1,7 @@
+azure-functions
+azure-storage-file-datalake
+azure-core
+requests
+beautifulsoup4
+pandas
+python-dotenv
