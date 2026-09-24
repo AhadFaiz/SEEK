@@ -1,13 +1,15 @@
 """
-Task 1 — Extract
-=================
-Retrieves tender records from the Etimad public tenders portal and saves them,
-unmodified, to `data/raw/`. Cleaning, translation, and agency classification are
-handled in Task 2 (`02_profile_clean.py`).
+SEEK — Extract step.
 
-Data source: internal JSON endpoint used by the Etimad public listing page
-(see README.md -> Source Definition for endpoint details, auth, rate limits,
-and licence notes).
+Collects the open tenders listed on Etimad's public tenders portal and saves
+them, unmodified, to data/raw/:
+
+    etimad_all_tenders_<YYYY-MM-DD>.json   the day's full tender list
+    tender_details_by_id.json              detail sections per tender (cumulative)
+
+Data source: the internal JSON endpoint behind the public listing page. See
+README.md → "Source definition" for the endpoint, authentication, rate limits
+and licence notes.
 """
 
 # ── 1. Imports ────────────────────────────────────────────────────────────
@@ -41,17 +43,14 @@ HEADERS = {
 
 
 # ── 3. Fetch a single page ───────────────────────────────────────────────
-# Requests can return 429 Too Many Requests under rapid successive calls.
-# Retries with exponential backoff on 429, and a short backoff on generic
-# connection errors.
-#
-# NOTE (2026-09-19): after an accidental burst of ~9 concurrent runs hit this
-# endpoint at once, Etimad's rate limiter stayed rejecting requests far longer
-# than the original 5s/10s/15s/20s backoff could ride out — even a single,
-# well-behaved run kept failing after 4 attempts. Backoff and retry count were
-# both increased so a single clean run has a much better chance of riding out
-# a lingering throttle on its own, without needing another manual retry cycle.
 def fetch_page(page_number, page_size=PAGE_SIZE, max_retries=6):
+    """Fetch one page of the tender list and return the parsed JSON.
+
+    Etimad can answer HTTP 429 (or 400) when throttling. These are retried up
+    to max_retries times, waiting 20 s × attempt number, so a single run can
+    ride out a lingering throttle. Connection errors are retried after 5 s.
+    Any other HTTP error aborts the run.
+    """
     params = {
         "PageSize": page_size,
         "PublishDateId": PUBLISH_DATE_ID,
@@ -80,10 +79,14 @@ def fetch_page(page_number, page_size=PAGE_SIZE, max_retries=6):
     raise RuntimeError(f"Failed to fetch page {page_number} after {max_retries} attempts")
 
 
-# ── 4. Inspect response shape ────────────────────────────────────────────
-# Run once to confirm the response structure before building the extraction loop.
-# Prints the top-level type, the key holding the tender list, and one sample record.
+# ── 4. Response shape check ──────────────────────────────────────────────
 def inspect_response_shape():
+    """Print the structure of a small sample response at the start of each run.
+
+    A quick sanity check that the endpoint still returns the expected shape:
+    prints the top-level keys, the key holding the tender list, and the fields
+    of one sample record.
+    """
     sample = fetch_page(page_number=1, page_size=5)
 
     items_preview = []
@@ -103,14 +106,14 @@ def inspect_response_shape():
         print(list(items_preview[0].keys()))
 
 
-# ── 5. Extract the tender list from a response ───────────────────────────
-# RESPONSE_LIST_KEY is confirmed from the inspection above: the Etimad endpoint
-# wraps the tender list under "data", alongside "totalCount", "pageSize",
-# and "currentPage".
+# ── 5. Read the tender list from a response ──────────────────────────────
+# The endpoint wraps the tender list under "data", alongside "totalCount",
+# "pageSize" and "currentPage".
 RESPONSE_LIST_KEY = "data"
 
 
 def extract_items(payload):
+    """Return the list of tender records from a page response (empty list if none)."""
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict) and RESPONSE_LIST_KEY:
@@ -119,15 +122,19 @@ def extract_items(payload):
 
 
 def get_total_count(payload):
+    """Return the total number of tenders reported by the portal, if present."""
     if isinstance(payload, dict):
         return payload.get("totalCount")
     return None
 
 
 # ── 6. Run the extraction ────────────────────────────────────────────────
-# Iterates through pages and deduplicates on tenderId, which is a stable
-# unique identifier returned by the API. Stops early if a page returns no items.
 def run_extraction(pages_to_scrape):
+    """Fetch up to pages_to_scrape pages and return the unique tender records.
+
+    Records are de-duplicated on tenderId (stable and unique per tender). The
+    loop stops early when a page returns no items, and waits 3 s between pages.
+    """
     all_items = []
     seen_ids = set()
 
@@ -159,9 +166,8 @@ def run_extraction(pages_to_scrape):
 
 
 # ── 7. Save raw output ───────────────────────────────────────────────────
-# Records are saved exactly as returned by the API — no field selection,
-# renaming, or cleaning at this stage.
 def save_raw_output(records):
+    """Save the records exactly as returned by the API to etimad_all_tenders_<date>.json."""
     output_path = RAW_DIR / f"etimad_all_tenders_{TODAY}.json"
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -171,10 +177,9 @@ def save_raw_output(records):
     return output_path
 
 
-# ── 8. Source diversity summary ──────────────────────────────────────────
-# Informational only. Final agency classification (mapping raw agency names
-# to canonical sources) happens in Task 2.
+# ── 8. Run summary ───────────────────────────────────────────────────────
 def print_source_diversity_summary(records):
+    """Print how many tenders, distinct agencies and distinct activities were collected."""
     AGENCY_FIELD_NAME = "agencyName"
 
     distinct_agencies = sorted(set(
@@ -189,28 +194,20 @@ def print_source_diversity_summary(records):
     print(f"Distinct activity/category names: {len(distinct_activities)}")
 
 
-# ── 9. Tender detail extraction (incremental) ────────────────────────────
-# Each tender listing above is a summary. Full detail — dates, classification and
-# execution location, awarding results, local-content requirements — lives behind
-# four additional endpoints, keyed by tenderIdString (already present on every
-# record above).
+# ── 9. Tender details (incremental) ──────────────────────────────────────
+# Each listing record is a summary. Four more endpoints, keyed by
+# tenderIdString, return the detail sections: dates, classification and place
+# of execution, awarding results, and local content requirements.
 #
-# These four endpoints return rendered HTML fragments, not JSON (their names —
-# ...ViewComponenet — are ASP.NET view components). Each fragment follows a
-# consistent structure: a list of <li class="list-group-item"> rows, each with
-# a label (.etd-item-title) and a value (.etd-item-info, sometimes containing
-# multiple <span> values — e.g. a Gregorian date alongside its Hijri equivalent).
-# parse_view_component_html extracts every label/value pair generically,
-# regardless of the exact wording of the labels.
+# They return HTML fragments (ASP.NET view components), not JSON. Each fragment
+# is a list of <li class="list-group-item"> rows with a label (.etd-item-title)
+# and a value (.etd-item-info, sometimes several <span> values such as a
+# Gregorian date and its Hijri equivalent).
 #
-# Incremental by design, for daily runs: results are stored in a persistent
-# file (tender_details_by_id.json) keyed by tenderId. Every run loads whatever
-# was already fetched and only requests details for tenders not yet in that file.
-# The first run processes all tenders (4 endpoints each, ~1-1.5 hours at the
-# 3-second courtesy delay); every run after that only processes tenders that are
-# new since the previous run — typically a handful, finishing in minutes. An
-# awarding result of {} is a genuine value (not yet awarded), not a fetch
-# failure, so it is never retried on the next run.
+# Details are stored in tender_details_by_id.json, keyed by tenderId. Each run
+# loads the file and fetches details only for tenders not already in it, so a
+# normal daily run fetches just the new tenders. An empty awarding result ({})
+# means "not awarded yet", not a failed fetch.
 
 DETAIL_ENDPOINTS = {
     "dates": "https://tenders.etimad.sa/Tender/GetTenderDatesViewComponenet",
@@ -223,7 +220,7 @@ DETAILS_STORE_PATH = RAW_DIR / "tender_details_by_id.json"
 
 
 def parse_view_component_html(html_text):
-    """Extracts label/value pairs from an Etimad view-component HTML fragment."""
+    """Extract label/value pairs from an Etimad view-component HTML fragment."""
     soup = BeautifulSoup(html_text, "html.parser")
     data = {}
     for item in soup.select("li.list-group-item"):
@@ -243,6 +240,12 @@ def parse_view_component_html(html_text):
 
 
 def fetch_detail(endpoint_url, tender_id_str, max_retries=3):
+    """Fetch one detail section for a tender and return its label/value pairs.
+
+    HTTP 429 is retried with a 5 s × attempt wait. Other failures are returned
+    as {"error": "..."} instead of raising, so one failed section does not stop
+    the run.
+    """
     params = {"tenderIdStr": tender_id_str}
     for attempt in range(1, max_retries + 1):
         try:
@@ -260,6 +263,7 @@ def fetch_detail(endpoint_url, tender_id_str, max_retries=3):
 
 
 def load_details_store():
+    """Load tender_details_by_id.json, or return an empty dict on the first run."""
     if DETAILS_STORE_PATH.exists():
         with open(DETAILS_STORE_PATH, encoding="utf-8") as f:
             return json.load(f)
@@ -267,13 +271,18 @@ def load_details_store():
 
 
 def save_details_store(store):
+    """Write the details store back to tender_details_by_id.json."""
     with open(DETAILS_STORE_PATH, "w", encoding="utf-8") as f:
         json.dump(store, f, ensure_ascii=False, indent=2)
 
 
 def fetch_missing_tender_details(records, max_new=None):
-    """max_new caps how many *new* tenders are processed this run — useful
-    for a quick validation pass before committing to the full run."""
+    """Fetch the four detail sections for every tender not yet in the store.
+
+    max_new caps how many new tenders are processed in this run (useful for a
+    quick test). Waits 3 s between requests and saves progress every 20 tenders
+    so a long run is not lost if interrupted.
+    """
     store = load_details_store()
     pending = [r for r in records if str(r.get("tenderId")) not in store]
 
@@ -297,7 +306,6 @@ def fetch_missing_tender_details(records, max_new=None):
         store[str(tender_id)] = detail
         print(f"[{i}/{len(pending)}] Done: tender {tender_id}")
 
-        # Save every 20 tenders so a long first run isn't lost to an interruption
         if i % 20 == 0:
             save_details_store(store)
 
@@ -306,6 +314,7 @@ def fetch_missing_tender_details(records, max_new=None):
 
 
 def main():
+    """Run the extract step: check the response shape, collect, save, fetch new details."""
     inspect_response_shape()
 
     records = run_extraction(PAGES_TO_SCRAPE)
