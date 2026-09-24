@@ -10,3 +10,9 @@ data/processed/*
 !data/interim/.gitkeep
 !data/processed/.gitkeep
 .env
+logs/
+translation_cache*.json
+data/raw_cloud/
+seek_dbt/target/
+seek_dbt/logs/
+seek_dbt/seek.duckdb

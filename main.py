@@ -3,8 +3,8 @@ Main entry point
 =================
 Runs Task 1 (extraction) only.
 
-Tasks 2-4 (clean/translate/classify, validate, archive) moved to Aseel's
-Azure Data Factory pipeline as of the instructor's ADF-native-transformation
+Tasks 2-4 (clean/translate/classify, validate, archive) moved to Azure Data
+Factory, following our supervisor's advice (21 Sept).
 pivot — see SEEK_ADF_Handoff_for_Aseel.md for full details.
 
 Task 5 (notifications) is temporarily removed from this file until it's

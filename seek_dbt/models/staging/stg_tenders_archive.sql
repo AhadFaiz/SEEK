@@ -1,0 +1,1 @@
+select * from read_csv_auto('../data/processed/tenders_archive.csv', header=true)
