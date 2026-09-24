@@ -1,15 +1,11 @@
 """
-Main entry point
-=================
-Runs Task 1 (extraction) only.
+SEEK — local entry point for the extraction step.
 
-Tasks 2-4 (clean/translate/classify, validate, archive) moved to Azure Data
-Factory, following our supervisor's advice (21 Sept).
-pivot — see SEEK_ADF_Handoff_for_Aseel.md for full details.
+Runs the extractor in src/extract.py, which collects the day's tender list and
+any new tender details from Etimad and saves them to data/raw/.
 
-Task 5 (notifications) is temporarily removed from this file until it's
-decided whether notifications move to ADF (reading tender_copy.csv from
-seek-public) or stay Python-side reading from ADF's output container.
+The same entry point is used by the Azure Function (azure_function/function_app.py)
+on its daily schedule. Processing of the raw data runs in Azure Data Factory.
 
 Run from the project root:
     python3 main.py
@@ -19,6 +15,7 @@ import os
 import sys
 from pathlib import Path
 
+# src/ modules use relative paths (e.g. ../data/raw), so run from inside src/.
 SRC_DIR = Path(__file__).resolve().parent / "src"
 os.chdir(SRC_DIR)
 sys.path.insert(0, str(SRC_DIR))
@@ -27,6 +24,7 @@ import extract
 
 
 def main():
+    """Run each pipeline step in order and print a header for each."""
     steps = [
         ("Task 1 — Extract", extract.main),
     ]

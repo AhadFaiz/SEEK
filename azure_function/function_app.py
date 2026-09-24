@@ -1,33 +1,26 @@
 """
-SEEK Pipeline — Azure Function entry point
-============================================
-Two triggers, sharing the same core logic:
+SEEK — Azure Function for the Extract and Load steps.
 
-  - run_pipeline_daily (Timer trigger): the REAL scheduled path. Runs every
-    day at 06:00. Timer triggers have no hard execution-time limit, so this
-    is safe for however long the pipeline actually takes.
+Triggers
+    run_pipeline_daily   Timer trigger, every day at 07:00 UTC (10:00 Riyadh).
+                         The production path.
+    run_pipeline_manual  HTTP trigger for quick manual tests. Azure limits HTTP
+                         responses to about 230 seconds, so a full run can time
+                         out here; use the timer for real runs.
 
-  - run_pipeline_manual (HTTP trigger): for quick manual testing only.
-    Azure enforces a hard 230-second reply limit on ALL HTTP-triggered
-    functions (an Azure Load Balancer default, not something host.json's
-    functionTimeout can override) — so this endpoint will time out on a
-    full run. Fine for a quick smoke test; it is not the production path.
+Each run
+    1. Downloads the current data/raw/ folder from the landing container in
+       Azure Data Lake into a temporary copy of the app (the deployed folder is
+       read-only at runtime).
+    2. Runs main.py from that copy, which extracts the day's data from Etimad.
+    3. Uploads data/raw/ back to the landing container, skipping files whose
+       content is unchanged (MD5 check).
 
-Design choice for the pipeline itself: rather than rewriting extract.py to
-read and write ADLS directly, each run:
+Azure Data Factory reads the landing container and performs all processing.
 
-  1. Downloads the current data/raw/ folder from ADLS into a fresh /tmp
-     working copy of the app (main.py + src/), since the deployed app
-     folder itself is read-only at runtime.
-  2. Runs main.py from that copy, completely unmodified.
-  3. Uploads the updated data/raw/ folder back to ADLS.
-
-NOTE (post-ADF-pivot): main.py now runs ONLY Task 1 (extraction). Tasks
-2-4 (clean/translate/classify, validate, archive) have moved to Aseel's
-Azure Data Factory pipeline, which reads from this Function's output
-container (seek-data-landing) separately. This Function no longer touches
-data/interim/ or data/processed/ — those folders no longer exist in this
-Function's output, they only ever existed for the now-removed Tasks 2-4.
+Settings (Application settings, never in code)
+    ADLS_ACCOUNT_NAME   storage account name
+    ADLS_SAS_TOKEN      SAS token for the storage account
 """
 
 import hashlib
@@ -44,14 +37,15 @@ from azure.storage.filedatalake import ContentSettings, DataLakeServiceClient
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
-# Name of the ADLS container that mirrors the local data/ folder.
+# Landing container that mirrors the local data/ folder.
 CONTAINER_NAME = "seek-data-landing"
 
-# Only Task 1's output folder needs to round-trip through this Function now.
+# Folder inside data/ that is synced with the container.
 DATA_SUBFOLDER = "raw"
 
 
 def get_file_system_client():
+    """Return a client for the landing container, using the account name and SAS token."""
     account_name = os.getenv("ADLS_ACCOUNT_NAME")
     sas_token = os.getenv("ADLS_SAS_TOKEN")
     service_client = DataLakeServiceClient(
@@ -62,7 +56,7 @@ def get_file_system_client():
 
 
 def download_data_folder(file_system_client, local_data_dir: Path):
-    """Mirrors everything under 'data/raw/' in the container into local_data_dir/raw."""
+    """Copy everything under 'data/raw/' in the container into local_data_dir/raw."""
     remote_prefix = f"data/{DATA_SUBFOLDER}"
     try:
         paths = list(file_system_client.get_paths(path=remote_prefix))
@@ -88,7 +82,7 @@ def download_data_folder(file_system_client, local_data_dir: Path):
 
 
 def compute_md5(file_path: Path) -> bytes:
-    """Returns the raw MD5 digest of a local file's content."""
+    """Return the raw MD5 digest of a local file's content."""
     hasher = hashlib.md5()
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
@@ -97,9 +91,11 @@ def compute_md5(file_path: Path) -> bytes:
 
 
 def upload_data_folder(file_system_client, local_data_dir: Path):
-    """Uploads everything under local_data_dir/raw back to 'data/raw/' in the
-    container — but skips any file whose content hasn't actually changed
-    since the last upload, so "Last modified" reflects real changes only."""
+    """Upload everything under local_data_dir/raw to 'data/raw/' in the container.
+
+    A file is skipped when its MD5 matches the content_md5 stored on the
+    remote file.
+    """
     local_raw_dir = local_data_dir / DATA_SUBFOLDER
     if not local_raw_dir.exists():
         logging.info(f"No local {DATA_SUBFOLDER}/ folder to upload — nothing to do.")
@@ -118,7 +114,7 @@ def upload_data_folder(file_system_client, local_data_dir: Path):
         try:
             directory_client.create_directory()
         except Exception:
-            pass  # already exists — fine
+            pass  # directory already exists
 
         file_client = file_system_client.get_file_client(remote_path)
         local_hash = compute_md5(local_file)
@@ -127,7 +123,7 @@ def upload_data_folder(file_system_client, local_data_dir: Path):
             remote_props = file_client.get_file_properties()
             remote_hash = remote_props.content_settings.content_md5
         except Exception:
-            remote_hash = None  # file doesn't exist remotely yet — must upload
+            remote_hash = None  # file does not exist remotely yet
 
         if remote_hash == local_hash:
             skipped += 1
@@ -149,7 +145,7 @@ def upload_data_folder(file_system_client, local_data_dir: Path):
 
 
 def execute_pipeline():
-    """Core logic shared by both triggers. Raises on failure."""
+    """Download raw data, run the extraction, upload the result. Raises on failure."""
     deployed_dir = Path(__file__).resolve().parent
     run_dir = Path(tempfile.mkdtemp(prefix="seek_run_"))
 
@@ -181,6 +177,7 @@ def execute_pipeline():
 
 @app.timer_trigger(schedule="0 0 7 * * *", arg_name="myTimer", run_on_startup=False, use_monitor=True)
 def run_pipeline_daily(myTimer: func.TimerRequest) -> None:
+    """Scheduled daily run at 07:00 UTC (10:00 Riyadh)."""
     logging.info("SEEK pipeline triggered by daily schedule.")
     try:
         execute_pipeline()
@@ -191,6 +188,7 @@ def run_pipeline_daily(myTimer: func.TimerRequest) -> None:
 
 @app.route(route="run_pipeline", methods=["POST", "GET"])
 def run_pipeline_manual(req: func.HttpRequest) -> func.HttpResponse:
+    """Manual run over HTTP, for quick tests only (subject to the ~230 s HTTP limit)."""
     logging.info("SEEK pipeline function triggered manually via HTTP.")
     try:
         execute_pipeline()
