@@ -1,9 +1,23 @@
 """
-Task 2 — Profile & Clean
-========================
-Loads the raw tender records from `data/raw/`, profiles the data, translates
-Arabic text fields to English, classifies each agency into a canonical source
-and a broader sector, and saves the cleaned result to `data/interim/cleaned.csv`.
+SEEK — profiling, translation and classification (reference implementation).
+
+The production version of this logic runs in Azure Data Factory. This module
+is kept as readable reference code for the same rules:
+
+    1. Profile the latest raw extract (types, nulls, unique values).
+    2. Translate Arabic text columns with Azure AI Translator, 100 texts per
+       call, reusing a translation cache so no text is translated twice.
+    3. Derive source_entity — the parent organisation without branch detail.
+    4. Classify each tender into one of 16 business sectors from Arabic keywords
+       ("Other - needs review: <entity>" when nothing matches).
+    5. Rename columns to snake_case and save data/interim/cleaned.csv.
+
+Note: unlike the production pipeline, which keeps the Arabic original next to
+an English (_en) column, this version replaces each Arabic column with its
+English translation.
+
+Settings are read from a local .env file (never committed):
+    AZURE_TRANSLATOR_KEY, AZURE_TRANSLATOR_ENDPOINT, AZURE_TRANSLATOR_REGION
 """
 
 # ── 1. Imports ────────────────────────────────────────────────────────────
@@ -25,6 +39,7 @@ INTERIM_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_latest_raw():
+    """Load the most recent etimad_all_tenders_<date>.json into a DataFrame."""
     latest_file = sorted(RAW_DIR.glob("etimad_all_tenders_*.json"))[-1]
 
     with open(latest_file, encoding="utf-8") as f:
@@ -36,9 +51,8 @@ def load_latest_raw():
 
 
 # ── 3. Profile ────────────────────────────────────────────────────────────
-# For each column: dtype, null count, null percentage, unique count, and a
-# sample value. Use this to spot columns that need cleaning before moving on.
 def profile_dataframe(df):
+    """Print and return dtype, null count, null %, unique count and a sample value per column."""
     profile = pd.DataFrame({
         "dtype": df.dtypes,
         "null_count": df.isnull().sum(),
@@ -50,20 +64,7 @@ def profile_dataframe(df):
     return profile
 
 
-# ── 4. Translate Arabic text fields to English (Azure AI Translator) ────
-# Uses the official Azure Translator REST API — reliable, no scraping-based
-# blocks. Requests are sent in batches of up to 100 texts per call, which is
-# dramatically faster than one call per value.
-#
-# Credentials are read from a local .env file (never committed to git):
-#   AZURE_TRANSLATOR_KEY=...
-#   AZURE_TRANSLATOR_ENDPOINT=https://api.cognitive.microsofttranslator.com/
-#   AZURE_TRANSLATOR_REGION=uaenorth
-#
-# A persistent cache (translation_cache.json) is loaded and updated so that
-# values translated in a previous run are never re-sent to the API — only
-# genuinely new values incur a request on subsequent daily runs.
-
+# ── 4. Translation settings and sector keywords ──────────────────────────
 load_dotenv()
 
 AZURE_KEY = os.getenv("AZURE_TRANSLATOR_KEY")
@@ -80,6 +81,8 @@ BATCH_SIZE = 100
 
 NEEDS_REVIEW_PREFIX = "Other - needs review: "
 
+# Sector → Arabic keywords matched against source_entity. Order matters: the
+# first sector with a matching keyword wins.
 SECTOR_KEYWORDS = {
     "Security & Defense": ["أمن", "دفاع", "حرس", "شرطة", "قوات", "عسكري", "مباحث", "حدود", "بحرية", "برية", "جوي", "جوية", "أركان"],
     "Health": ["صحة", "صحية", "صحي", "مستشف", "طبي", "طبية"],
@@ -100,7 +103,9 @@ SECTOR_KEYWORDS = {
 }
 
 
+# ── 5. Translation ───────────────────────────────────────────────────────
 def load_translation_cache():
+    """Load the Arabic → English translation cache, or return an empty dict."""
     if CACHE_PATH.exists():
         with open(CACHE_PATH, encoding="utf-8") as f:
             return json.load(f)
@@ -108,12 +113,18 @@ def load_translation_cache():
 
 
 def save_translation_cache(translation_cache):
+    """Write the translation cache back to disk."""
     with open(CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(translation_cache, f, ensure_ascii=False, indent=2)
 
 
 def translate_batch_azure(texts, source="ar", target="en", max_retries=3):
-    """Translates up to 100 texts in a single Azure Translator call."""
+    """Translate up to 100 texts in one Azure Translator call.
+
+    Retries with a 3 s × attempt wait. If every attempt fails, each text is
+    returned as "Unknown - translation failed: <text>" so it is retried on the
+    next run.
+    """
     if not texts:
         return []
 
@@ -139,6 +150,11 @@ def translate_batch_azure(texts, source="ar", target="en", max_retries=3):
 
 
 def translate_columns(df, translation_cache):
+    """Add a <column>_en translation for each column in COLUMNS_TO_TRANSLATE.
+
+    Only values not yet in the cache (or that failed before) are sent to the
+    translator; the cache is saved at the end.
+    """
     for col in COLUMNS_TO_TRANSLATE:
         if col not in df.columns:
             continue
@@ -170,14 +186,14 @@ def translate_columns(df, translation_cache):
     return df
 
 
-# ── 5. Classify agency into a canonical source ───────────────────────────
-# Raw agency names include branch-level variation (e.g. different regional
-# offices of the same authority, written as "Authority - Branch" or
-# "Authority (Branch)"). The canonical source is derived automatically by
-# splitting on the first "-", "(", or the words "فرع"/"مكتب" — no manual
-# dictionary required. AGENCY_COL is resolved dynamically so this cell works
-# whether or not the snake_case renaming (Section 7) has already run.
+# ── 6. Parent organisation (source_entity) ───────────────────────────────
 def derive_canonical_source(agency_name):
+    """Return the parent organisation from an agency name.
+
+    Agency names often include a branch, written as "Authority - Branch",
+    "Authority (Branch)" or with the words فرع / مكتب. The text before the
+    first of these is kept.
+    """
     if not agency_name or not isinstance(agency_name, str):
         return "Unknown - extraction issue"
     parts = re.split(r"\s*-\s*|\s*\(|\bفرع\b|\bمكتب\b", agency_name)
@@ -186,6 +202,7 @@ def derive_canonical_source(agency_name):
 
 
 def add_canonical_source(df):
+    """Add the source_entity column (works before or after snake_case renaming)."""
     agency_col = "agencyName" if "agencyName" in df.columns else "agency_name"
 
     df["source_entity"] = df[agency_col].apply(derive_canonical_source)
@@ -195,12 +212,9 @@ def add_canonical_source(df):
     return df
 
 
-# ── 6. Classify into a broader sector ────────────────────────────────────
-# A second, coarser grouping on top of source_entity — useful for reporting
-# sector-level diversity (security, health, education, ...) rather than raw
-# agency counts. Keyword-based, with an "Other - needs review" fallback so new
-# agencies never get silently misclassified.
+# ── 7. Sector classification ─────────────────────────────────────────────
 def classify_sector(agency_name):
+    """Return the first sector whose keywords appear in the name, else an "Other - needs review" label."""
     if not agency_name or not isinstance(agency_name, str):
         return "Unknown - extraction issue"
     for sector, keywords in SECTOR_KEYWORDS.items():
@@ -210,6 +224,7 @@ def classify_sector(agency_name):
 
 
 def add_sector(df):
+    """Add the sector column from source_entity and report unmatched entities."""
     df["sector"] = df["source_entity"].apply(classify_sector)
 
     unclassified = df[df["sector"].str.startswith("Other")]["sector"].unique()
@@ -219,19 +234,13 @@ def add_sector(df):
     return df
 
 
-# ── 6.5 Translate source_entity to English ───────────────────────────────
-# source_entity (Section 5) is derived by splitting the original Arabic
-# agencyName — its values (e.g. قوات الدفاع الجوي) are Arabic fragments, not
-# full agency names, so they generally aren't already sitting in
-# translation_cache as exact keys. sector (Section 6) is fine — it's
-# already in English regardless of the language of source_entity, since the
-# dictionary keys ("Security & Defense", etc.) were written in English from
-# the start.
-#
-# This step batch-translates the unique source_entity values the same way
-# Section 4 did, reusing the same on-disk cache, and overwrites the column
-# in place.
+# ── 8. Translate source_entity ───────────────────────────────────────────
 def translate_source_entity(df, translation_cache):
+    """Translate source_entity to English in place, reusing the translation cache.
+
+    source_entity values are fragments of the agency name, so most of them are
+    not in the cache yet and are translated here in batches.
+    """
     unique_entities = [
         v for v in df["source_entity"].dropna().unique()
         if v not in translation_cache or translation_cache[v].startswith("Unknown - translation failed")
@@ -255,19 +264,9 @@ def translate_source_entity(df, translation_cache):
     return df
 
 
-# ── 6.6 Fix the sector fallback label ────────────────────────────────────
-# Section 6 built sector before source_entity was translated (it had
-# to — the keyword matching needs the original Arabic). For agencies that
-# didn't match any sector keyword, the fallback value is
-# "Other - needs review: <agency name>" — and at that point <agency name>
-# was still Arabic, so it got baked into sector as Arabic text that survives
-# even after Section 6.5 translates source_entity itself.
-#
-# This replaces the Arabic tail of any "Other - needs review: ..." value
-# with its English translation, using the same cache Section 6.5 just
-# populated — the exact Arabic string was translated one cell ago, so it's
-# guaranteed to already be in translation_cache.
+# ── 9. English "Other - needs review" labels ─────────────────────────────
 def fix_needs_review_label(sector_value, translation_cache):
+    """Replace the Arabic entity name in an "Other - needs review" label with its translation."""
     if isinstance(sector_value, str) and sector_value.startswith(NEEDS_REVIEW_PREFIX):
         arabic_name = sector_value[len(NEEDS_REVIEW_PREFIX):]
         translated_name = translation_cache.get(arabic_name, arabic_name)
@@ -276,23 +275,23 @@ def fix_needs_review_label(sector_value, translation_cache):
 
 
 def fix_sector_labels(df, translation_cache):
+    """Apply fix_needs_review_label to the whole sector column.
+
+    Sectors are classified on the Arabic text, so fallback labels contain the
+    Arabic entity name until this step translates it.
+    """
     before = df["sector"].astype(str).str.startswith(NEEDS_REVIEW_PREFIX).sum()
     df["sector"] = df["sector"].apply(lambda v: fix_needs_review_label(v, translation_cache))
     print(f"Fixed {before} 'Other - needs review' labels to use the English agency name")
     return df
 
 
-# ── 6.5 (continued) Replace Arabic text with the English translation ────
-# The requirement is that the final data contains no Arabic text at all,
-# so the original Arabic columns are not kept side-by-side with their _en
-# counterparts. Instead, each translated column's value overwrites the
-# original column (same name), and the temporary _en column is dropped.
-#
-# This has to run after Section 5 (canonical source) and Section 6 (sector),
-# because both of those still need the original Arabic agencyName to do
-# their pattern matching (e.g. splitting on "فرع"/"مكتب", matching Arabic
-# sector keywords). Doing this replacement any earlier would break them.
+# ── 10. Replace Arabic columns with English ──────────────────────────────
 def overwrite_arabic_columns_with_english(df):
+    """Replace each translated column with its _en version and drop the _en column.
+
+    Runs after source_entity and sector, which both need the Arabic agency name.
+    """
     for col in COLUMNS_TO_TRANSLATE:
         en_col = f"{col}_en"
         if col in df.columns and en_col in df.columns:
@@ -304,11 +303,9 @@ def overwrite_arabic_columns_with_english(df):
     return df
 
 
-# ── 7. General cleanup ────────────────────────────────────────────────────
-# - Column names standardized to snake_case
-# - Missing values already labeled explicitly at extraction (Task 1) and above
-# - No further deduplication needed — tenderId uniqueness was enforced in Task 1
+# ── 11. Column names and save ────────────────────────────────────────────
 def to_snake_case_columns(df):
+    """Rename every column from camelCase to snake_case."""
     df.columns = [
         "".join(["_" + c.lower() if c.isupper() else c for c in col]).lstrip("_")
         for col in df.columns
@@ -317,8 +314,8 @@ def to_snake_case_columns(df):
     return df
 
 
-# ── 8. Save ────────────────────────────────────────────────────────────────
 def save_cleaned(df):
+    """Save the result to data/interim/cleaned.csv (UTF-8 with BOM)."""
     output_path = INTERIM_DIR / "cleaned.csv"
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
     print(f"Saved to: {output_path}")
@@ -326,6 +323,7 @@ def save_cleaned(df):
 
 
 def main():
+    """Run profiling, translation, classification and save the cleaned file."""
     df = load_latest_raw()
     profile_dataframe(df)
 
