@@ -1,15 +1,17 @@
 """
-Task 3 — Schema Validation
-===========================
-Loads `data/interim/cleaned.csv` (Task 2's output), checks every row against
-a simple schema (required fields present, numeric fields actually numeric,
-tender_id unique), and splits the result into `validated.csv` (rows that
-pass every check) and `rejected.csv` (rows that fail, with the specific
-reason listed) inside `data/processed/`.
+SEEK — schema validation (reference implementation).
 
-Nothing is silently dropped or guessed — a rejected row keeps every original
-column plus a `validation_issues` note explaining exactly why it was
-rejected, so Task 4 (and anyone reviewing the data later) can see the reason.
+The production version of this logic runs in Azure Data Factory. This module
+is kept as readable reference code for the same rules.
+
+Loads data/interim/cleaned.csv, checks every row, and splits the result in
+data/processed/:
+
+    validated.csv   rows that pass every check
+    rejected.csv    rows that fail, with a validation_issues column giving the reason
+
+Checks: required fields are present and non-empty, cost fields are numeric
+when present, and tender_id is unique. Nothing is silently dropped.
 """
 
 # ── 1. Imports ────────────────────────────────────────────────────────────
@@ -25,22 +27,24 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_cleaned():
+    """Load data/interim/cleaned.csv and print its columns."""
     df = pd.read_csv(INTERIM_DIR / "cleaned.csv")
     print(f"Loaded {len(df)} rows from cleaned.csv")
     print(df.columns.tolist())
     return df
 
 
-# ── 3. Define the schema ─────────────────────────────────────────────────
-# - REQUIRED_COLUMNS: must be present and non-empty on every row.
-# - NUMERIC_COLUMNS: if present and non-null, must parse as a number.
-# - tender_id must additionally be unique across the whole file.
+# ── 3. Schema ────────────────────────────────────────────────────────────
+# REQUIRED_COLUMNS: must be present and non-empty on every row.
+# NUMERIC_COLUMNS:  if present and non-null, must parse as a number.
+# tender_id must also be unique across the whole file (see section 5).
 REQUIRED_COLUMNS = ["tender_id", "reference_number", "tender_name", "source_entity", "sector"]
 NUMERIC_COLUMNS = ["buying_cost", "financial_fees", "invitation_cost"]
 
 
 # ── 4. Validate every row ────────────────────────────────────────────────
 def validate_row(row):
+    """Return a list of issue codes for one row (empty list = valid)."""
     issues = []
 
     for col in REQUIRED_COLUMNS:
@@ -58,14 +62,17 @@ def validate_row(row):
 
 
 def add_validation_issues(df):
+    """Add a validation_issues column (a list of issue codes per row)."""
     df["validation_issues"] = df.apply(validate_row, axis=1)
     return df
 
 
-# ── 5. Check for duplicate tender_id ─────────────────────────────────────
-# A duplicate tender_id means the same tender appears twice — this would
-# corrupt the upsert logic in Task 4, so it must be caught here, not later.
+# ── 5. Duplicate tender_id ───────────────────────────────────────────────
 def flag_duplicate_tender_ids(df):
+    """Add "duplicate_tender_id" to every row whose tender_id appears more than once.
+
+    A duplicate would make the archive upsert ambiguous, so it is caught here.
+    """
     duplicate_ids = set(df["tender_id"][df["tender_id"].duplicated(keep=False)])
 
     if duplicate_ids:
@@ -80,6 +87,7 @@ def flag_duplicate_tender_ids(df):
 
 # ── 6. Split into validated / rejected and save ──────────────────────────
 def split_and_save(df):
+    """Write validated.csv and rejected.csv and print a breakdown of rejection reasons."""
     df["is_valid"] = df["validation_issues"].apply(lambda x: len(x) == 0)
 
     validated = df[df["is_valid"]].drop(columns=["validation_issues", "is_valid"])
@@ -103,6 +111,7 @@ def split_and_save(df):
 
 
 def main():
+    """Validate cleaned.csv and write validated.csv and rejected.csv."""
     df = load_cleaned()
     df = add_validation_issues(df)
     df = flag_duplicate_tender_ids(df)

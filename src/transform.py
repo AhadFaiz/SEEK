@@ -1,15 +1,16 @@
 """
-Task 4 — Join & Transform
-===========================
-Loads `data/processed/validated.csv` (Task 3's output), attaches whatever
-tender-detail data has been extracted so far (`data/raw/tender_details_by_id.json`
-from Task 1), and upserts the result into the permanent archive at
-`data/processed/tenders_archive.csv`.
+SEEK — join and archive (reference implementation).
 
-Upsert = insert new tenders, update existing ones if they changed, and keep
-everything else untouched. This is what makes daily automated runs safe —
-running this script again tomorrow only adds/updates what's different; it
-never duplicates or loses a tender that was archived before.
+The production version of this logic runs in Azure Data Factory. This module
+is kept as readable reference code for the same rules.
+
+Loads data/processed/validated.csv, attaches each tender's detail sections
+from data/raw/tender_details_by_id.json (translated to English), and upserts
+the result into data/processed/tenders_archive.csv.
+
+Upsert: new tenders are added, tenders already in the archive are replaced by
+their newest version, and everything else is left untouched — so running it
+again never duplicates or loses a tender.
 """
 
 # ── 1. Imports ────────────────────────────────────────────────────────────
@@ -33,19 +34,19 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_validated():
+    """Load data/processed/validated.csv."""
     validated = pd.read_csv(PROCESSED_DIR / "validated.csv")
     print(f"Loaded {len(validated)} validated rows")
     return validated
 
 
-# ── 3. Attach tender detail data (if available) ──────────────────────────
-# Task 1's incremental detail extraction (tender_details_by_id.json) may
-# only cover a subset of tenders so far — that's expected, not an error. Each
-# tender's four detail sections (dates, classification/location, awarding,
-# local content) are attached as a single JSON string column rather than
-# expanded into fixed columns, since the label wording inside them can vary
-# slightly between tenders.
+# ── 3. Tender details ────────────────────────────────────────────────────
+# The details file may cover only some tenders; that is expected. Each tender's
+# four sections (dates, classification/location, awarding, local content) are
+# attached as one JSON string column, because label wording varies slightly
+# between tenders.
 def load_tender_details():
+    """Load tender_details_by_id.json, or return an empty dict if it does not exist."""
     details_path = RAW_DIR / "tender_details_by_id.json"
 
     if details_path.exists():
@@ -57,18 +58,10 @@ def load_tender_details():
     return tender_details
 
 
-# ── 3.5 Translate tender detail dictionaries to English ──────────────────
-# tender_details_by_id.json was scraped straight from Etimad's HTML detail
-# tabs (Task 1), so every label (e.g. تاريخ التقديم) and most values inside
-# it are still Arabic — Task 2's translation step never touches this file, it
-# only translates the main listing fields. Left as-is, this Arabic text would
-# end up embedded inside the tender_details_json column of every archive
-# and final CSV.
-#
-# This step finds every Arabic string (label or value) anywhere in the
-# nested dict, translates the unique ones via the same Azure Translator setup
-# Task 2 uses, and reuses/extends the same translation_cache.json — so a
-# label already translated in a previous run (or by Task 2) is never re-sent.
+# ── 4. Translate the detail sections ─────────────────────────────────────
+# Labels and most values in the detail sections are Arabic. Every distinct
+# Arabic string is translated once with Azure AI Translator, reusing the same
+# translation cache as the listing fields.
 
 load_dotenv()
 AZURE_KEY = os.getenv("AZURE_TRANSLATOR_KEY")
@@ -83,11 +76,16 @@ BATCH_SIZE = 100
 
 
 def has_arabic(text):
+    """Return True if text is a string containing Arabic characters."""
     return isinstance(text, str) and bool(ARABIC_RE.search(text))
 
 
 def translate_batch_azure(texts, source="ar", target="en", max_retries=3):
-    """Translates up to 100 texts in a single Azure Translator call."""
+    """Translate up to 100 texts in one Azure Translator call.
+
+    Retries with a 3 s × attempt wait; texts that still fail are returned as
+    "Unknown - translation failed: <text>" so they are retried on the next run.
+    """
     if not texts:
         return []
 
@@ -113,7 +111,7 @@ def translate_batch_azure(texts, source="ar", target="en", max_retries=3):
 
 
 def collect_arabic_strings(details_store):
-    """Every distinct Arabic label or value anywhere in the nested structure."""
+    """Return every distinct Arabic label or value in the nested details store."""
     found = set()
     for sections in details_store.values():
         for fields in sections.values():
@@ -128,12 +126,14 @@ def collect_arabic_strings(details_store):
 
 
 def translate_value(value, translation_cache):
+    """Return the cached translation of an Arabic value, or the value unchanged."""
     if has_arabic(value):
         return translation_cache.get(value, value)
     return value
 
 
 def translate_details_store(details_store, translation_cache):
+    """Return a copy of the details store with every label and value translated."""
     translated_store = {}
     for tender_id, sections in details_store.items():
         translated_sections = {}
@@ -150,6 +150,7 @@ def translate_details_store(details_store, translation_cache):
 
 
 def translate_tender_details(tender_details):
+    """Translate new Arabic strings in the details store, update the cache, and return the translated store."""
     if CACHE_PATH.exists():
         with open(CACHE_PATH, encoding="utf-8") as f:
             translation_cache = json.load(f)
@@ -179,6 +180,7 @@ def translate_tender_details(tender_details):
 
 
 def attach_detail_columns(validated, tender_details):
+    """Add tender_details_json (the detail sections as JSON) and has_full_details columns."""
     def get_detail_json(tender_id):
         return json.dumps(tender_details.get(str(tender_id), {}), ensure_ascii=False)
 
@@ -189,20 +191,21 @@ def attach_detail_columns(validated, tender_details):
     return validated
 
 
-# ── 4. Upsert into the permanent archive ─────────────────────────────────
-# - First run ever: the archive doesn't exist yet, so it's simply created.
-# - Every run after that: new tender_ids are appended, and any tender_id
-#   that already exists gets its row replaced with the freshest version
-#   (in case its status, awarding result, etc. changed since last time).
+# ── 5. Upsert into the archive ───────────────────────────────────────────
 ARCHIVE_PATH = PROCESSED_DIR / "tenders_archive.csv"
 
 
 def upsert_archive(validated):
+    """Merge today's rows into tenders_archive.csv, keeping one row per tender_id.
+
+    On the first run the archive is created. Afterwards new tender_ids are
+    added and existing ones are replaced by today's version.
+    """
     if ARCHIVE_PATH.exists():
         archive = pd.read_csv(ARCHIVE_PATH)
         before_count = len(archive)
         combined = pd.concat([archive, validated], ignore_index=True)
-        # keep="last" means today's row wins over yesterday's for the same tender_id
+        # keep="last": today's row wins over the archived row for the same tender_id
         combined = combined.drop_duplicates(subset="tender_id", keep="last")
     else:
         before_count = 0
@@ -219,8 +222,9 @@ def upsert_archive(validated):
     return combined
 
 
-# ── 5. Save today's snapshot (optional, for audit trail) ────────────────
+# ── 6. Daily snapshot ────────────────────────────────────────────────────
 def save_snapshot(combined):
+    """Save a dated copy of the archive (final_<date>.csv) as an audit trail."""
     today = date.today().isoformat()
     snapshot_path = PROCESSED_DIR / f"final_{today}.csv"
     combined.to_csv(snapshot_path, index=False, encoding="utf-8-sig")
@@ -229,6 +233,7 @@ def save_snapshot(combined):
 
 
 def main():
+    """Attach translated details, upsert the archive and save today's snapshot."""
     validated = load_validated()
 
     tender_details = load_tender_details()
