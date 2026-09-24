@@ -24,6 +24,8 @@ from bs4 import BeautifulSoup
 # ── 2. Configuration ─────────────────────────────────────────────────────
 BASE_URL = "https://tenders.etimad.sa/Tender/AllSupplierTendersForVisitorAsync"
 
+# Etimad returns 24 tenders per page whatever PageSize is requested, so
+# 20 pages = the first 480 listed tenders (the listing reports ~7,100 in total).
 PAGE_SIZE = 100
 PAGES_TO_SCRAPE = 20
 PUBLISH_DATE_ID = 5  # matches the default filter applied on the public listing page
