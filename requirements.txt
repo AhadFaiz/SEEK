@@ -3,3 +3,5 @@ beautifulsoup4
 pandas
 python-dotenv
 openpyxl
+pytest
+azure-storage-file-datalake
