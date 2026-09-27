@@ -1,0 +1,748 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "seek-dfa"
+        },
+        "seek_adls_link_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'seek_adls_link'"
+        },
+        "seek_account_link_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'seek_account_link'"
+        },
+        "ls_seek_data_landing_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'ls_seek_data_landing'"
+        },
+        "LS_SeekADFInternal_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'LS_SeekADFInternal'"
+        },
+        "LS_SeekPublic_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'LS_SeekPublic'"
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "[concat(parameters('factoryName'), '/seek_adls_link')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureBlobFS",
+                "typeProperties": {
+                    "sasUri": "[parameters('seek_adls_link_sasUri')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/seek_account_link')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureBlobFS",
+                "typeProperties": {
+                    "sasUri": "[parameters('seek_account_link_sasUri')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/ls_seek_data_landing')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureBlobFS",
+                "typeProperties": {
+                    "sasUri": "[parameters('ls_seek_data_landing_sasUri')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/LS_SeekADFInternal')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureBlobFS",
+                "typeProperties": {
+                    "sasUri": "[parameters('LS_SeekADFInternal_sasUri')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/LS_SeekPublic')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureBlobFS",
+                "typeProperties": {
+                    "sasUri": "[parameters('LS_SeekPublic_sasUri')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/daily-archive-sync')]",
+            "type": "Microsoft.DataFactory/factories/triggers",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "runtimeState": "Stopped",
+                "pipelines": [],
+                "type": "ScheduleTrigger",
+                "typeProperties": {
+                    "recurrence": {
+                        "frequency": "Day",
+                        "interval": 1,
+                        "startTime": "2026-09-21T14:55:00",
+                        "timeZone": "Arab Standard Time",
+                        "schedule": {}
+                    }
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_RawTenders')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "ls_seek_data_landing",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "etimad_all_tenders_*.json",
+                        "folderPath": "data/raw",
+                        "fileSystem": "seek-data-landing"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/ls_seek_data_landing')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_FinalArchive')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekPublic",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "DelimitedText",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "tender_copy.csv",
+                        "fileSystem": "seek-public"
+                    },
+                    "columnDelimiter": ",",
+                    "escapeChar": "\"",
+                    "firstRowAsHeader": true,
+                    "quoteChar": "\""
+                },
+                "schema": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekPublic')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_TenderDetails')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "ls_seek_data_landing",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "tender_details_by_id.json",
+                        "folderPath": "data/raw",
+                        "fileSystem": "seek-data-landing"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/ls_seek_data_landing')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_TranslationCache')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "translation_cache.json",
+                        "fileSystem": "seek-adf-internal"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_SectorKeywords')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "DelimitedText",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "sector_keywords.csv",
+                        "fileSystem": "seek-adf-internal"
+                    },
+                    "columnDelimiter": ",",
+                    "escapeChar": "\\",
+                    "firstRowAsHeader": true,
+                    "quoteChar": "\""
+                },
+                "schema": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_Stage1Output')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "stage1_output.json",
+                        "folderPath": "staging",
+                        "fileSystem": "seek-adf-internal"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_NeedsTranslation')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "needs_translation.json",
+                        "folderPath": "staging",
+                        "fileSystem": "seek-adf-internal"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_NewTranslations')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "folderPath": "staging/new_translations",
+                        "fileSystem": "seek-adf-internal"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_Stage2Output')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "stage2_output.json",
+                        "folderPath": "staging",
+                        "fileSystem": "seek-adf-internal"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_Stage3Valid')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "stage3_valid.json",
+                        "folderPath": "staging",
+                        "fileSystem": "seek-adf-internal"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_Stage3Rejected')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SeekADFInternal",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "stage3_rejected.json",
+                        "folderPath": "staging",
+                        "fileSystem": "seek-adf-internal"
+                    }
+                },
+                "schema": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SeekADFInternal')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DataFlow_DeriveAndClassify')]",
+            "type": "Microsoft.DataFactory/factories/dataflows",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "MappingDataFlow",
+                "typeProperties": {
+                    "sources": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_RawTenders",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceRawTenders"
+                        },
+                        {
+                            "dataset": {
+                                "referenceName": "DS_SectorKeywords",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceSectorKeywords"
+                        }
+                    ],
+                    "sinks": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage1Output",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkStage1Output"
+                        }
+                    ],
+                    "transformations": [
+                        {
+                            "name": "DeriveSourceEntity"
+                        },
+                        {
+                            "name": "JoinWithKeywords"
+                        },
+                        {
+                            "name": "RankKeywordMatches"
+                        },
+                        {
+                            "name": "FirstMatchOnly"
+                        },
+                        {
+                            "name": "FinalSector"
+                        }
+                    ],
+                    "scriptLines": [
+                        "source(output(",
+                        "          agencyCode as long,",
+                        "          agencyName as string,",
+                        "          branchId as short,",
+                        "          branchName as string,",
+                        "          buyingCost as double,",
+                        "          condetionalBookletPrice as double,",
+                        "          createdAt as string,",
+                        "          currentDate as string,",
+                        "          currentDateTime as string,",
+                        "          currentTime as string,",
+                        "          financialFees as double,",
+                        "          hasInvitations as boolean,",
+                        "          insideKSA as boolean,",
+                        "          invitationCost as double,",
+                        "          isUGRP as boolean,",
+                        "          lastEnqueriesDate as string,",
+                        "          lastEnqueriesDateHijri as date,",
+                        "          lastOfferPresentationDate as string,",
+                        "          lastOfferPresentationDateHijri as date,",
+                        "          multipleSearch as string,",
+                        "          offersOpeningDate as string,",
+                        "          offersOpeningDateHijri as date,",
+                        "          referenceNumber as long,",
+                        "          remainingDays as short,",
+                        "          remainingHours as short,",
+                        "          remainingMins as short,",
+                        "          submitionDate as string,",
+                        "          technicalOrganizationId as string,",
+                        "          tenderActivityId as short,",
+                        "          tenderActivityName as string,",
+                        "          tenderActivityNameList as string,",
+                        "          tenderId as integer,",
+                        "          tenderIdString as string,",
+                        "          tenderName as string,",
+                        "          tenderNumber as string,",
+                        "          tenderStatusId as short,",
+                        "          tenderStatusIdString as string,",
+                        "          tenderStatusName as string,",
+                        "          tenderTypeId as short,",
+                        "          tenderTypeName as string,",
+                        "          ugrpRFXResponseURL as string,",
+                        "          ugrpRfxUrl as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'arrayOfDocuments',",
+                        "     wildcardPaths:['data/raw/etimad_all_tenders_*.json']) ~> SourceRawTenders",
+                        "source(output(",
+                        "          keyword as string,",
+                        "          sector as string,",
+                        "          priority as short",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false) ~> SourceSectorKeywords",
+                        "SourceRawTenders derive(source_entity = regexReplace(agencyName, '(-.*|\\\\(.*|فرع.*|مكتب.*)', '')) ~> DeriveSourceEntity",
+                        "DeriveSourceEntity, SourceSectorKeywords join(instr(source_entity, keyword) > 0,",
+                        "     joinType:'left',",
+                        "     matchType:'exact',",
+                        "     ignoreSpaces: false,",
+                        "     broadcast: 'right')~> JoinWithKeywords",
+                        "JoinWithKeywords window(over(tenderId),",
+                        "     desc(currentDateTime, false),",
+                        "     asc(priority, true),",
+                        "     match_rank = rowNumber()) ~> RankKeywordMatches",
+                        "RankKeywordMatches filter(match_rank == 1) ~> FirstMatchOnly",
+                        "FirstMatchOnly derive(sector = iif(isNull(sector), concat(\"Other - needs review: \", source_entity), sector)) ~> FinalSector",
+                        "FinalSector sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     partitionFileNames:['stage1_output.json'],",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     partitionBy('hash', 1)) ~> SinkStage1Output"
+                    ]
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/DS_RawTenders')]",
+                "[concat(variables('factoryId'), '/datasets/DS_SectorKeywords')]",
+                "[concat(variables('factoryId'), '/datasets/DS_Stage1Output')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DataFlow_SplitCachedVsNew')]",
+            "type": "Microsoft.DataFactory/factories/dataflows",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "MappingDataFlow",
+                "typeProperties": {
+                    "sources": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage1Output",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceStage1"
+                        },
+                        {
+                            "dataset": {
+                                "referenceName": "DS_TranslationCache",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceCache"
+                        }
+                    ],
+                    "sinks": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_NeedsTranslation",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkNeedsTranslation"
+                        }
+                    ],
+                    "transformations": [
+                        {
+                            "name": "NotInCache"
+                        },
+                        {
+                            "name": "CollectTexts"
+                        },
+                        {
+                            "name": "OneTextPerRow"
+                        },
+                        {
+                            "name": "NonEmptyText"
+                        },
+                        {
+                            "name": "DistinctTexts"
+                        },
+                        {
+                            "name": "RenameCacheCol"
+                        }
+                    ],
+                    "scriptLines": [
+                        "source(output(",
+                        "          agencyCode as long,",
+                        "          agencyName as string,",
+                        "          branchId as short,",
+                        "          branchName as string,",
+                        "          buyingCost as double,",
+                        "          condetionalBookletPrice as double,",
+                        "          createdAt as string,",
+                        "          currentDate as string,",
+                        "          currentDateTime as string,",
+                        "          currentTime as string,",
+                        "          financialFees as double,",
+                        "          hasInvitations as boolean,",
+                        "          insideKSA as boolean,",
+                        "          invitationCost as double,",
+                        "          isUGRP as boolean,",
+                        "          keyword as string,",
+                        "          lastEnqueriesDate as string,",
+                        "          lastEnqueriesDateHijri as date,",
+                        "          lastOfferPresentationDate as string,",
+                        "          lastOfferPresentationDateHijri as date,",
+                        "          match_rank as boolean,",
+                        "          offersOpeningDate as string,",
+                        "          offersOpeningDateHijri as date,",
+                        "          priority as short,",
+                        "          referenceNumber as long,",
+                        "          remainingDays as short,",
+                        "          remainingHours as short,",
+                        "          remainingMins as short,",
+                        "          sector as string,",
+                        "          source_entity as string,",
+                        "          submitionDate as string,",
+                        "          tenderActivityId as short,",
+                        "          tenderActivityName as string,",
+                        "          tenderId as integer,",
+                        "          tenderIdString as string,",
+                        "          tenderName as string,",
+                        "          tenderNumber as string,",
+                        "          tenderStatusId as short,",
+                        "          tenderStatusIdString as string,",
+                        "          tenderStatusName as string,",
+                        "          tenderTypeId as short,",
+                        "          tenderTypeName as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'documentPerLine') ~> SourceStage1",
+                        "source(output(",
+                        "          arabic_text as string,",
+                        "          english_text as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'documentPerLine') ~> SourceCache",
+                        "DistinctTexts, RenameCacheCol exists(arabic_text == cache_text,",
+                        "     negate:true,",
+                        "     broadcast: 'auto')~> NotInCache",
+                        "SourceStage1 derive(texts = array(tenderName, agencyName, branchName, tenderTypeName, tenderActivityName, trim(source_entity))) ~> CollectTexts",
+                        "CollectTexts foldDown(unroll(texts),",
+                        "     mapColumn(",
+                        "          arabic_text = texts",
+                        "     ),",
+                        "     skipDuplicateMapInputs: false,",
+                        "     skipDuplicateMapOutputs: false) ~> OneTextPerRow",
+                        "OneTextPerRow filter(!isNull(arabic_text) && length(trim(arabic_text)) > 0) ~> NonEmptyText",
+                        "NonEmptyText aggregate(groupBy(arabic_text),",
+                        "     n = count()) ~> DistinctTexts",
+                        "SourceCache select(mapColumn(",
+                        "          cache_text = arabic_text",
+                        "     ),",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true) ~> RenameCacheCol",
+                        "NotInCache sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     partitionFileNames:['needs_translation.json'],",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     partitionBy('hash', 1)) ~> SinkNeedsTranslation"
+                    ]
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/DS_Stage1Output')]",
+                "[concat(variables('factoryId'), '/datasets/DS_TranslationCache')]",
+                "[concat(variables('factoryId'), '/datasets/DS_NeedsTranslation')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DataFlow_SaveTranslationRow')]",
+            "type": "Microsoft.DataFactory/factories/dataflows",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "MappingDataFlow",
+                "typeProperties": {
+                    "sources": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_SectorKeywords",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceDummy"
+                        }
+                    ],
+                    "sinks": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_NewTranslations",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkNewTranslationRow"
+                        }
+                    ],
+                    "transformations": [
+                        {
+                            "name": "BuildTranslationRow"
+                        },
+                        {
+                            "name": "SelectOnlyTranslation"
+                        }
+                    ],
+                    "scriptLines": [
+                        "parameters{",
+                        "     arabicText as string,",
+                        "     englishText as string",
+                        "}",
+                        "source(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     limit: 1,",
+                        "     ignoreNoFilesFound: false) ~> SourceDummy",
+                        "SourceDummy derive(arabic_text = $arabicText,",
+                        "          english_text = $englishText) ~> BuildTranslationRow",
+                        "BuildTranslationRow select(mapColumn(",
+                        "          arabic_text,",
+                        "          english_text",
+                        "     ),",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true) ~> SelectOnlyTranslation",
+                        "SelectOnlyTranslation sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true) ~> SinkNewTranslationRow"
+                    ]
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/DS_SectorKeywords')]",
+                "[concat(variables('factoryId'), '/datasets/DS_NewTranslations')]"
+            ]
+        }
+    ]
+}

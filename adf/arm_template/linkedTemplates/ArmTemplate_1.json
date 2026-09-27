@@ -1,0 +1,920 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "seek-dfa"
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "[concat(parameters('factoryName'), '/DataFlow_MergeAndUpdateCache')]",
+            "type": "Microsoft.DataFactory/factories/dataflows",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "MappingDataFlow",
+                "typeProperties": {
+                    "sources": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_NewTranslations",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceNewTranslations"
+                        },
+                        {
+                            "dataset": {
+                                "referenceName": "DS_TranslationCache",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceOldCache"
+                        }
+                    ],
+                    "sinks": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_TranslationCache",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkUpdatedCache"
+                        }
+                    ],
+                    "transformations": [
+                        {
+                            "name": "UnionAllTranslations"
+                        },
+                        {
+                            "name": "DedupeCache"
+                        }
+                    ],
+                    "scriptLines": [
+                        "source(output(",
+                        "          arabic_text as string,",
+                        "          english_text as string,",
+                        "          keyword as string,",
+                        "          priority as short,",
+                        "          sector as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: true,",
+                        "     purgeFiles: true,",
+                        "     documentForm: 'documentPerLine',",
+                        "     wildcardPaths:['staging/new_translations/*.json']) ~> SourceNewTranslations",
+                        "source(output(",
+                        "          arabic_text as string,",
+                        "          english_text as string,",
+                        "          keyword as string,",
+                        "          priority as short,",
+                        "          sector as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'documentPerLine') ~> SourceOldCache",
+                        "SourceNewTranslations, SourceOldCache union(byName: true)~> UnionAllTranslations",
+                        "UnionAllTranslations aggregate(groupBy(arabic_text),",
+                        "     english_text = first(english_text)) ~> DedupeCache",
+                        "DedupeCache sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     partitionFileNames:['translation_cache.json'],",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     partitionBy('hash', 1)) ~> SinkUpdatedCache"
+                    ]
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DataFlow_ApplyTranslations')]",
+            "type": "Microsoft.DataFactory/factories/dataflows",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "MappingDataFlow",
+                "typeProperties": {
+                    "sources": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage1Output",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceStage1Data"
+                        },
+                        {
+                            "dataset": {
+                                "referenceName": "DS_TranslationCache",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceUpdatedCache"
+                        }
+                    ],
+                    "sinks": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage2Output",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkStage2Output"
+                        },
+                        {
+                            "name": "CacheTranslations"
+                        }
+                    ],
+                    "transformations": [
+                        {
+                            "name": "ApplyEnglishText"
+                        }
+                    ],
+                    "scriptLines": [
+                        "source(output(",
+                        "          agencyCode as long,",
+                        "          agencyName as string,",
+                        "          branchId as short,",
+                        "          branchName as string,",
+                        "          buyingCost as double,",
+                        "          condetionalBookletPrice as double,",
+                        "          createdAt as string,",
+                        "          currentDate as string,",
+                        "          currentDateTime as string,",
+                        "          currentTime as string,",
+                        "          financialFees as double,",
+                        "          hasInvitations as boolean,",
+                        "          insideKSA as boolean,",
+                        "          invitationCost as double,",
+                        "          isUGRP as boolean,",
+                        "          keyword as string,",
+                        "          lastEnqueriesDate as string,",
+                        "          lastEnqueriesDateHijri as date,",
+                        "          lastOfferPresentationDate as string,",
+                        "          lastOfferPresentationDateHijri as date,",
+                        "          match_rank as boolean,",
+                        "          offersOpeningDate as string,",
+                        "          offersOpeningDateHijri as date,",
+                        "          priority as short,",
+                        "          referenceNumber as long,",
+                        "          remainingDays as short,",
+                        "          remainingHours as short,",
+                        "          remainingMins as short,",
+                        "          sector as string,",
+                        "          source_entity as string,",
+                        "          submitionDate as string,",
+                        "          tenderActivityId as short,",
+                        "          tenderActivityName as string,",
+                        "          tenderId as integer,",
+                        "          tenderIdString as string,",
+                        "          tenderName as string,",
+                        "          tenderNumber as string,",
+                        "          tenderStatusId as short,",
+                        "          tenderStatusIdString as string,",
+                        "          tenderStatusName as string,",
+                        "          tenderTypeId as short,",
+                        "          tenderTypeName as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'documentPerLine') ~> SourceStage1Data",
+                        "source(output(",
+                        "          arabic_text as string,",
+                        "          english_text as string,",
+                        "          keyword as string,",
+                        "          priority as short,",
+                        "          sector as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'documentPerLine') ~> SourceUpdatedCache",
+                        "SourceStage1Data derive(sector = iif(startsWith(sector, \"Other - needs review:\"), concat(\"Other - needs review: \", coalesce(CacheTranslations#lookup(source_entity).english_text, CacheTranslations#lookup(trim(source_entity)).english_text, trim(source_entity))), sector),",
+                        "          tenderName_en = coalesce(CacheTranslations#lookup(tenderName).english_text, tenderName),",
+                        "          agencyName_en = coalesce(CacheTranslations#lookup(agencyName).english_text, agencyName),",
+                        "          branchName_en = coalesce(CacheTranslations#lookup(branchName).english_text, branchName),",
+                        "          tenderTypeName_en = coalesce(CacheTranslations#lookup(tenderTypeName).english_text, tenderTypeName),",
+                        "          tenderActivityName_en = coalesce(CacheTranslations#lookup(tenderActivityName).english_text, tenderActivityName),",
+                        "          tenderStatusName_en = coalesce(CacheTranslations#lookup(tenderStatusName).english_text, tenderStatusName),",
+                        "          source_entity_en = coalesce(CacheTranslations#lookup(source_entity).english_text, CacheTranslations#lookup(trim(source_entity)).english_text, source_entity)) ~> ApplyEnglishText",
+                        "ApplyEnglishText sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     partitionFileNames:['stage2_output.json'],",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     partitionBy('hash', 1)) ~> SinkStage2Output",
+                        "SourceUpdatedCache sink(validateSchema: false,",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     keys:['arabic_text'],",
+                        "     store: 'cache',",
+                        "     format: 'inline',",
+                        "     output: false,",
+                        "     saveOrder: 1) ~> CacheTranslations"
+                    ]
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DataFlow_RenameAndValidate')]",
+            "type": "Microsoft.DataFactory/factories/dataflows",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "MappingDataFlow",
+                "typeProperties": {
+                    "sources": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage2Output",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceStage2"
+                        }
+                    ],
+                    "sinks": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage3Valid",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkValid"
+                        },
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage3Rejected",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkRejected"
+                        }
+                    ],
+                    "transformations": [
+                        {
+                            "name": "RenameToSnakeCase"
+                        },
+                        {
+                            "name": "SplitValidRejected"
+                        },
+                        {
+                            "name": "CleanWhitespace"
+                        }
+                    ],
+                    "scriptLines": [
+                        "source(output(",
+                        "          agencyCode as long,",
+                        "          agencyName as string,",
+                        "          arabic_text as string,",
+                        "          branchId as short,",
+                        "          branchName as string,",
+                        "          buyingCost as double,",
+                        "          condetionalBookletPrice as double,",
+                        "          createdAt as string,",
+                        "          currentDate as string,",
+                        "          currentDateTime as string,",
+                        "          currentTime as string,",
+                        "          english_text as string,",
+                        "          financialFees as double,",
+                        "          hasInvitations as boolean,",
+                        "          insideKSA as boolean,",
+                        "          invitationCost as double,",
+                        "          isUGRP as boolean,",
+                        "          keyword as string,",
+                        "          lastEnqueriesDate as string,",
+                        "          lastEnqueriesDateHijri as date,",
+                        "          lastOfferPresentationDate as string,",
+                        "          lastOfferPresentationDateHijri as date,",
+                        "          match_rank as boolean,",
+                        "          offersOpeningDate as string,",
+                        "          offersOpeningDateHijri as date,",
+                        "          priority as short,",
+                        "          referenceNumber as long,",
+                        "          remainingDays as short,",
+                        "          remainingHours as short,",
+                        "          remainingMins as short,",
+                        "          sector as string,",
+                        "          sector_english as string,",
+                        "          source_entity as string,",
+                        "          submitionDate as string,",
+                        "          tenderActivityId as short,",
+                        "          tenderActivityName as string,",
+                        "          tenderId as integer,",
+                        "          tenderIdString as string,",
+                        "          tenderName as string,",
+                        "          tenderNumber as string,",
+                        "          tenderStatusId as short,",
+                        "          tenderStatusIdString as string,",
+                        "          tenderStatusName as string,",
+                        "          tenderTypeId as short,",
+                        "          tenderTypeName as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'documentPerLine') ~> SourceStage2",
+                        "SourceStage2 select(mapColumn(",
+                        "          each(match(!in(['arabic_text','english_text','keyword','match_rank','priority'],name)),",
+                        "               lower(regexReplace($$,'([a-z])([A-Z])','$1_$2')) = $$)",
+                        "     ),",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true) ~> RenameToSnakeCase",
+                        "CleanWhitespace split(!isNull(tender_id) && !isNull(reference_number) && !isNull(tender_name),",
+                        "     disjoint: false) ~> SplitValidRejected@(validrows, rejectedrows)",
+                        "RenameToSnakeCase derive(each(match(type=='string'), $$ = trim(regexReplace($$, '\\\\s+', ' ')))) ~> CleanWhitespace",
+                        "SplitValidRejected@validrows sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     partitionFileNames:['stage3_valid.json'],",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     partitionBy('hash', 1)) ~> SinkValid",
+                        "SplitValidRejected@rejectedrows sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     partitionFileNames:['stage3_rejected.json'],",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     partitionBy('hash', 1)) ~> SinkRejected"
+                    ]
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DataFlow_UpsertArchive')]",
+            "type": "Microsoft.DataFactory/factories/dataflows",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "MappingDataFlow",
+                "typeProperties": {
+                    "sources": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_Stage3Valid",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceNewValid"
+                        },
+                        {
+                            "dataset": {
+                                "referenceName": "DS_FinalArchive",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SourceOldArchive"
+                        }
+                    ],
+                    "sinks": [
+                        {
+                            "dataset": {
+                                "referenceName": "DS_FinalArchive",
+                                "type": "DatasetReference"
+                            },
+                            "name": "SinkArchive"
+                        }
+                    ],
+                    "transformations": [
+                        {
+                            "name": "AddDates"
+                        },
+                        {
+                            "name": "UnionWithArchive"
+                        },
+                        {
+                            "name": "RankVersions"
+                        },
+                        {
+                            "name": "KeepLatest"
+                        },
+                        {
+                            "name": "FixFirstSeen"
+                        },
+                        {
+                            "name": "DropHelpers"
+                        },
+                        {
+                            "name": "AllToString"
+                        }
+                    ],
+                    "scriptLines": [
+                        "source(output(",
+                        "          agency_code as long,",
+                        "          agency_name as string,",
+                        "          arabic_text as string,",
+                        "          branch_id as short,",
+                        "          branch_name as string,",
+                        "          buying_cost as double,",
+                        "          condetional_booklet_price as double,",
+                        "          created_at as string,",
+                        "          current_date as string,",
+                        "          current_date_time as string,",
+                        "          current_time as string,",
+                        "          english_text as string,",
+                        "          financial_fees as double,",
+                        "          has_invitations as boolean,",
+                        "          inside_ksa as boolean,",
+                        "          invitation_cost as double,",
+                        "          is_ugrp as boolean,",
+                        "          keyword as string,",
+                        "          last_enqueries_date as string,",
+                        "          last_enqueries_date_hijri as date,",
+                        "          last_offer_presentation_date as string,",
+                        "          last_offer_presentation_date_hijri as date,",
+                        "          match_rank as boolean,",
+                        "          offers_opening_date as string,",
+                        "          offers_opening_date_hijri as date,",
+                        "          priority as short,",
+                        "          reference_number as long,",
+                        "          remaining_days as short,",
+                        "          remaining_hours as short,",
+                        "          remaining_mins as short,",
+                        "          sector as string,",
+                        "          sector_english as string,",
+                        "          source_entity as string,",
+                        "          submition_date as string,",
+                        "          tender_activity_id as short,",
+                        "          tender_activity_name as string,",
+                        "          tender_id as integer,",
+                        "          tender_id_string as string,",
+                        "          tender_name as string,",
+                        "          tender_number as string,",
+                        "          tender_status_id as short,",
+                        "          tender_status_id_string as string,",
+                        "          tender_status_name as string,",
+                        "          tender_type_id as short,",
+                        "          tender_type_name as string",
+                        "     ),",
+                        "     allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: false,",
+                        "     documentForm: 'documentPerLine') ~> SourceNewValid",
+                        "source(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     ignoreNoFilesFound: true,",
+                        "     multiLineRow: true) ~> SourceOldArchive",
+                        "SourceNewValid derive(first_seen_date = current_date_time,",
+                        "          last_updated = current_date_time) ~> AddDates",
+                        "AllToString, SourceOldArchive union(byName: true)~> UnionWithArchive",
+                        "UnionWithArchive window(over(reference_number),",
+                        "     desc(current_date_time, false),",
+                        "     row_num = rowNumber(),",
+                        "          earliest_seen = min(first_seen_date),",
+                        "          latest_seen = max(current_date_time)) ~> RankVersions",
+                        "RankVersions filter(row_num == 1) ~> KeepLatest",
+                        "KeepLatest derive(first_seen_date = earliest_seen,",
+                        "          last_updated = latest_seen) ~> FixFirstSeen",
+                        "FixFirstSeen select(mapColumn(",
+                        "          each(match(!in(['row_num','earliest_seen','latest_seen','arabic_text','english_text','keyword','match_rank','priority','sector_english'],name)))",
+                        "     ),",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true) ~> DropHelpers",
+                        "AddDates derive(each(match(true()), $$ = toString($$))) ~> AllToString",
+                        "DropHelpers sink(allowSchemaDrift: true,",
+                        "     validateSchema: false,",
+                        "     partitionFileNames:['tender_copy.csv'],",
+                        "     umask: 0022,",
+                        "     preCommands: [],",
+                        "     postCommands: [],",
+                        "     skipDuplicateMapInputs: true,",
+                        "     skipDuplicateMapOutputs: true,",
+                        "     quoteAll: true,",
+                        "     partitionBy('hash', 1)) ~> SinkArchive"
+                    ]
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/SEEK_Transform_Pipeline')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "DataFlow_DeriveAndClassify",
+                        "type": "ExecuteDataFlow",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "dataflow": {
+                                "referenceName": "DataFlow_DeriveAndClassify",
+                                "type": "DataFlowReference",
+                                "parameters": {},
+                                "datasetParameters": {
+                                    "SourceRawTenders": {},
+                                    "SourceSectorKeywords": {},
+                                    "SinkStage1Output": {}
+                                }
+                            },
+                            "staging": {},
+                            "compute": {
+                                "coreCount": 8,
+                                "computeType": "General"
+                            },
+                            "traceLevel": "Fine"
+                        }
+                    },
+                    {
+                        "name": "DataFlow_SplitCachedVsNew",
+                        "type": "ExecuteDataFlow",
+                        "dependsOn": [
+                            {
+                                "activity": "DataFlow_DeriveAndClassify",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "dataflow": {
+                                "referenceName": "DataFlow_SplitCachedVsNew",
+                                "type": "DataFlowReference",
+                                "parameters": {},
+                                "datasetParameters": {
+                                    "SourceStage1": {},
+                                    "SourceCache": {},
+                                    "SinkNeedsTranslation": {}
+                                }
+                            },
+                            "staging": {},
+                            "compute": {
+                                "coreCount": 8,
+                                "computeType": "General"
+                            },
+                            "traceLevel": "Fine"
+                        }
+                    },
+                    {
+                        "name": "Lookup_NeedsTranslation",
+                        "type": "Lookup",
+                        "dependsOn": [
+                            {
+                                "activity": "DataFlow_SplitCachedVsNew",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "JsonSource",
+                                "storeSettings": {
+                                    "type": "AzureBlobFSReadSettings",
+                                    "recursive": true,
+                                    "enablePartitionDiscovery": false
+                                },
+                                "formatSettings": {
+                                    "type": "JsonReadSettings"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "DS_NeedsTranslation",
+                                "type": "DatasetReference",
+                                "parameters": {}
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "ForEach_TranslateNewTexts",
+                        "type": "ForEach",
+                        "dependsOn": [
+                            {
+                                "activity": "Lookup_NeedsTranslation",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@activity('Lookup_NeedsTranslation').output.value",
+                                "type": "Expression"
+                            },
+                            "isSequential": true,
+                            "activities": [
+                                {
+                                    "name": "Web_CallTranslator",
+                                    "type": "WebActivity",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.12:00:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": true
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "method": "POST",
+                                        "headers": {
+                                            "Ocp-Apim-Subscription-Key": {
+                                                "value": "@pipeline().parameters.TranslatorKey",
+                                                "type": "Expression"
+                                            },
+                                            "Content-Type": "application/json",
+                                            "Ocp-Apim-Subscription-Region": "uaenorth"
+                                        },
+                                        "url": {
+                                            "value": "@concat(pipeline().parameters.AzureEndpoint, '/translate?api-version=3.0&from=ar&to=en')",
+                                            "type": "Expression"
+                                        },
+                                        "body": {
+                                            "value": "@json(concat('[{\"Text\":\"', replace(replace(item().arabic_text, '\\', '\\\\'), '\"', '\\\"'), '\"}]'))",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "DataFlow_SaveTranslationRow",
+                                    "type": "ExecuteDataFlow",
+                                    "dependsOn": [
+                                        {
+                                            "activity": "Web_CallTranslator",
+                                            "dependencyConditions": [
+                                                "Succeeded"
+                                            ]
+                                        }
+                                    ],
+                                    "policy": {
+                                        "timeout": "0.12:00:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "dataflow": {
+                                            "referenceName": "DataFlow_SaveTranslationRow",
+                                            "type": "DataFlowReference",
+                                            "parameters": {
+                                                "arabicText": {
+                                                    "value": "'@{replace(replace(replace(replace(item().arabic_text, '\\', '\\\\'), '''', '\\'''), decodeUriComponent('%0D'), '\\r'), decodeUriComponent('%0A'), '\\n')}'",
+                                                    "type": "Expression"
+                                                },
+                                                "englishText": {
+                                                    "value": "'@{replace(json(activity('Web_CallTranslator').output.Response)[0].translations[0].text, '''', '\\''')}'",
+                                                    "type": "Expression"
+                                                }
+                                            },
+                                            "datasetParameters": {
+                                                "SourceDummy": {},
+                                                "SinkNewTranslationRow": {}
+                                            }
+                                        },
+                                        "staging": {},
+                                        "compute": {
+                                            "coreCount": 8,
+                                            "computeType": "General"
+                                        },
+                                        "traceLevel": "Fine"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "DataFlow_MergeAndUpdateCache",
+                        "type": "ExecuteDataFlow",
+                        "dependsOn": [
+                            {
+                                "activity": "ForEach_TranslateNewTexts",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "dataflow": {
+                                "referenceName": "DataFlow_MergeAndUpdateCache",
+                                "type": "DataFlowReference",
+                                "parameters": {},
+                                "datasetParameters": {
+                                    "SourceNewTranslations": {},
+                                    "SourceOldCache": {},
+                                    "SinkUpdatedCache": {}
+                                }
+                            },
+                            "staging": {},
+                            "compute": {
+                                "coreCount": 8,
+                                "computeType": "General"
+                            },
+                            "traceLevel": "Fine"
+                        }
+                    },
+                    {
+                        "name": "DataFlow_ApplyTranslations",
+                        "type": "ExecuteDataFlow",
+                        "dependsOn": [
+                            {
+                                "activity": "DataFlow_MergeAndUpdateCache",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "dataflow": {
+                                "referenceName": "DataFlow_ApplyTranslations",
+                                "type": "DataFlowReference",
+                                "parameters": {},
+                                "datasetParameters": {
+                                    "SourceStage1Data": {},
+                                    "SourceUpdatedCache": {},
+                                    "SinkStage2Output": {},
+                                    "CacheTranslations": {}
+                                }
+                            },
+                            "staging": {},
+                            "compute": {
+                                "coreCount": 8,
+                                "computeType": "General"
+                            },
+                            "traceLevel": "Fine"
+                        }
+                    },
+                    {
+                        "name": "DataFlow_RenameAndValidate",
+                        "type": "ExecuteDataFlow",
+                        "dependsOn": [
+                            {
+                                "activity": "DataFlow_ApplyTranslations",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "dataflow": {
+                                "referenceName": "DataFlow_RenameAndValidate",
+                                "type": "DataFlowReference",
+                                "parameters": {},
+                                "datasetParameters": {
+                                    "SourceStage2": {},
+                                    "SinkValid": {},
+                                    "SinkRejected": {}
+                                }
+                            },
+                            "staging": {},
+                            "compute": {
+                                "coreCount": 8,
+                                "computeType": "General"
+                            },
+                            "traceLevel": "Fine"
+                        }
+                    },
+                    {
+                        "name": "DataFlow_UpsertArchive",
+                        "type": "ExecuteDataFlow",
+                        "dependsOn": [
+                            {
+                                "activity": "DataFlow_RenameAndValidate",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "dataflow": {
+                                "referenceName": "DataFlow_UpsertArchive",
+                                "type": "DataFlowReference",
+                                "parameters": {},
+                                "datasetParameters": {
+                                    "SourceNewValid": {},
+                                    "SourceOldArchive": {},
+                                    "SinkArchive": {}
+                                }
+                            },
+                            "staging": {},
+                            "compute": {
+                                "coreCount": 8,
+                                "computeType": "General"
+                            },
+                            "traceLevel": "Fine"
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "AzureEndpoint": {
+                        "type": "string",
+                        "defaultValue": "https://api.cognitive.microsofttranslator.com"
+                    },
+                    "TranslatorKey": {
+                        "type": "string",
+                        "defaultValue": "<set in ADF>"
+                    }
+                },
+                "annotations": [],
+                "lastPublishTime": "2026-09-24T12:59:01Z"
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/dataflows/DataFlow_MergeAndUpdateCache')]",
+                "[concat(variables('factoryId'), '/dataflows/DataFlow_ApplyTranslations')]",
+                "[concat(variables('factoryId'), '/dataflows/DataFlow_RenameAndValidate')]",
+                "[concat(variables('factoryId'), '/dataflows/DataFlow_UpsertArchive')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/daily-seek-transform')]",
+            "type": "Microsoft.DataFactory/factories/triggers",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "runtimeState": "Stopped",
+                "pipelines": [
+                    {
+                        "pipelineReference": {
+                            "referenceName": "SEEK_Transform_Pipeline",
+                            "type": "PipelineReference"
+                        },
+                        "parameters": {}
+                    }
+                ],
+                "type": "ScheduleTrigger",
+                "typeProperties": {
+                    "recurrence": {
+                        "frequency": "Day",
+                        "interval": 1,
+                        "startTime": "2026-09-24T11:00:00",
+                        "timeZone": "Arab Standard Time",
+                        "schedule": {}
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/pipelines/SEEK_Transform_Pipeline')]"
+            ]
+        }
+    ]
+}

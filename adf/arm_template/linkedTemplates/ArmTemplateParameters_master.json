@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "value": "seek-dfa"
+        },
+        "seek_adls_link_sasUri": {
+            "value": ""
+        },
+        "seek_account_link_sasUri": {
+            "value": ""
+        },
+        "ls_seek_data_landing_sasUri": {
+            "value": ""
+        },
+        "LS_SeekADFInternal_sasUri": {
+            "value": ""
+        },
+        "LS_SeekPublic_sasUri": {
+            "value": ""
+        },
+        "containerUri": {
+            "value": ""
+        },
+        "containerSasToken": {
+            "value": ""
+        }
+    }
+}

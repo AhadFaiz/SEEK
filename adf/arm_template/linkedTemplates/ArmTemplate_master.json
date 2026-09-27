@@ -1,0 +1,97 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "seek-dfa"
+        },
+        "seek_adls_link_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'seek_adls_link'"
+        },
+        "seek_account_link_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'seek_account_link'"
+        },
+        "ls_seek_data_landing_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'ls_seek_data_landing'"
+        },
+        "LS_SeekADFInternal_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'LS_SeekADFInternal'"
+        },
+        "LS_SeekPublic_sasUri": {
+            "type": "secureString",
+            "metadata": "Secure string for 'sasUri' of 'LS_SeekPublic'"
+        },
+        "containerUri": {
+            "type": "string",
+            "metadata": "URI to storage account containing linked ARM templates"
+        },
+        "containerSasToken": {
+            "type": "string",
+            "metadata": "Sas token to storage account containing linked ARM templates"
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "seek-dfa_ArmTemplate_0",
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2024-03-01",
+            "properties": {
+                "mode": "incremental",
+                "templateLink": {
+                    "uri": "[concat(parameters('containerUri'), '/ArmTemplate_0.json', parameters('containerSasToken'))]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "factoryName": {
+                        "value": "[parameters('factoryName')]"
+                    },
+                    "seek_adls_link_sasUri": {
+                        "value": "[parameters('seek_adls_link_sasUri')]"
+                    },
+                    "seek_account_link_sasUri": {
+                        "value": "[parameters('seek_account_link_sasUri')]"
+                    },
+                    "ls_seek_data_landing_sasUri": {
+                        "value": "[parameters('ls_seek_data_landing_sasUri')]"
+                    },
+                    "LS_SeekADFInternal_sasUri": {
+                        "value": "[parameters('LS_SeekADFInternal_sasUri')]"
+                    },
+                    "LS_SeekPublic_sasUri": {
+                        "value": "[parameters('LS_SeekPublic_sasUri')]"
+                    }
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "seek-dfa_ArmTemplate_1",
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2024-03-01",
+            "properties": {
+                "mode": "incremental",
+                "templateLink": {
+                    "uri": "[concat(parameters('containerUri'), '/ArmTemplate_1.json', parameters('containerSasToken'))]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "factoryName": {
+                        "value": "[parameters('factoryName')]"
+                    }
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'seek-dfa_ArmTemplate_0')]"
+            ]
+        }
+    ]
+}
