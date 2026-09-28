@@ -1,4 +1,84 @@
 
+# SEEK — Saudi Etimad Extraction & Knowledgebase
+
+An automated ELT data pipeline on Azure that collects Saudi government tenders from Etimad every day, stores them raw, and transforms them into a bilingual, sector-classified historical archive.
+
+Etimad removes a tender once it closes, publishes in Arabic only, and offers no business-sector grouping. SEEK keeps every tender it sees, adds English next to every Arabic text field, classifies each tender into one of 16 sectors, and maintains one up-to-date row per tender.
+
+**Users:** anyone who bids on Etimad tenders — contractors and suppliers in every sector — and market analysts.
+
+Capstone project — Data Engineering Program, Saudi Digital Academy × WeCloudData (September 2026).
+Team: Ahad Faiz Alotaibi · Aseel Aldawood · Atheer AL Abdullah
+
+## Architecture
+
+| Step | Tool | What it does | Schedule |
+|---|---|---|---|
+| E — Extract | Azure Function `seek-pipeline-function` (Python) | Calls Etimad's listing endpoint and per-tender detail endpoints | Daily, 10:00 AM Riyadh (07:00 UTC) |
+| L — Load | Azure Data Lake Storage Gen2 (`ahadfaiz1`) | Stores the raw JSON unchanged in `seek-data-landing` | With every extraction |
+| T — Transform | Azure Data Factory, `SEEK_Transform_Pipeline` | Classifies, translates, validates and archives | Daily, 11:00 AM Riyadh (trigger `daily-seek-transform`) |
+
+## Storage containers
+
+| Container | Layer | Written by | Contents |
+|---|---|---|---|
+| `seek-data-landing` | Raw | Python extractor | `data/raw/etimad_all_tenders_<date>.json` (one per day) and `data/raw/tender_details_by_id.json` (cumulative) |
+| `seek-adf-internal` | Working | Azure Data Factory | `translation_cache.json` (JSON Lines), `sector_keywords.csv`, `staging/` |
+| `seek-public` | Final | Azure Data Factory | `tender_copy.csv` — the historical archive |
+
+## Transformation steps (Azure Data Factory)
+
+1. **DeriveAndClassify** — derives `source_entity` (parent entity without branch detail) and assigns a sector by joining `sector_keywords.csv`. Tenders that match no keyword are labelled `Other - needs review: <source_entity>`, never dropped.
+2. **SplitCachedVsNew** — separates Arabic texts already in the translation cache from new ones.
+3. **Lookup_NeedsTranslation → ForEach_TranslateNewTexts** — sends each new text to Azure AI Translator and saves the result.
+4. **MergeAndUpdateCache** — adds new translations to the cache; keeps one row per Arabic text.
+5. **ApplyTranslations** — adds an English `_en` column next to each Arabic text column. The Arabic original is kept as the official text.
+6. **RenameAndValidate** — renames columns to snake_case, cleans whitespace and line breaks, splits valid and rejected rows.
+7. **UpsertArchive** — merges the day's rows with the existing archive, keeps one row per `reference_number`, records `first_seen_date` and `last_updated`, and writes `tender_copy.csv`.
+
+Every step runs only if the previous one succeeded.
+
+## Why ELT
+
+The first version ran every step in Python inside the Azure Function (ETL). On 21 September 2026, following our supervisor's advice, all transformation was moved into Azure Data Factory. Python now only extracts and loads. Keeping the raw layer let us rebuild the archive from raw files while fixing defects, without re-scraping Etimad. The original Python modules in `src/` remain as the reference specification of the transformation logic.
+
+## Repository structure
+
+SEEK/ ├── azure_function/ # Azure Function (extract + load): function_app.py, host.json, requirements.txt ├── src/ # Python modules │ ├── extract.py # extraction logic used by the Azure Function │ ├── config.py # non-secret settings, paths and constants │ └── clean.py, profile.py, schema.py, transform.py, notify.py │ # original Python transformation (reference specification for ADF) ├── notebooks/ # development notebooks: extract, profile/clean, validate, join/transform, upload ├── scripts/ │ ├── check_output.py # verifies the archive and reconciles it with raw files │ └── convert_cache.py # converts the local translation cache to JSON Lines for ADF ├── seek_dbt/ # star-schema prototype (dbt + DuckDB): fact_tender + 4 dimensions ├── adf/ # exported Azure Data Factory ARM template ├── data/ # local data folders (contents are gitignored) ├── tests/ # unit tests (pytest) ├── main.py # local entry point for extraction ├── config.yaml └── requirements.txt
+## Setup
+
+git clone https://github.com/AhadFaiz/SEEK.git cd SEEK python3 -m venv .venv source .venv/bin/activate pip install -r requirements.txt
+Create a `.env` file in the project root (it is gitignored — never commit it):
+
+ADLS_ACCOUNT_NAME=<storage account name> ADLS_SAS_TOKEN=<SAS token for the storage account> AZURE_TRANSLATOR_KEY=<Azure AI Translator key> # only needed by the original Python transformation modules
+The Etimad listing pages need no login or key.
+
+## How to run
+
+### 1. Extraction (local)
+
+python main.py
+Writes the day's raw listing file and the cumulative tender-details file to `data/raw/`. In production the same code runs in the Azure Function on its daily timer and uploads to `seek-data-landing`; the Function reads `ADLS_ACCOUNT_NAME` and `ADLS_SAS_TOKEN` from its Application settings.
+
+### 2. Transformation (Azure Data Factory)
+
+The transformation runs only in Azure Data Factory, not locally. The pipeline definition is in `adf/`. It runs daily on the `daily-seek-transform` schedule trigger, or manually from ADF Studio (`SEEK_Transform_Pipeline` → Add trigger → Trigger now). Run history is in ADF Studio → Monitor → Pipeline runs.
+
+### 3. Verify the output
+
+Download `tender_copy.csv` from `seek-public` (do not open or save it with Excel — it can garble the UTF-8 Arabic text), then run:
+
+python scripts/check_output.py --archive path/to/tender_copy.csv --raw data/raw
+It checks CSV structure, key uniqueness, helper columns and line breaks, English coverage of every `_en` column, the sector distribution, and — with `--raw` — reconciles the archive with the raw daily files. It ends with `ALL CHECKS PASSED` or the number of checks that need attention.
+
+### 4. Unit tests
+
+pytest
+12 offline tests cover the extraction step.
+
+### 5. Star schema prototype (optional)
+
+cd seek_dbt dbt run
 Requires `dbt-duckdb` and a DuckDB profile in `~/.dbt/profiles.yml`. Builds `stg_tenders_archive`, `dim_agency`, `dim_sector`, `dim_tender_type`, `dim_date` and `fact_tender`. This is a design prototype for future reporting, not part of the production pipeline.
 
 ## Source definition
